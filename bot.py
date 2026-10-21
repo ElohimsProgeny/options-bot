@@ -14,7 +14,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Options Bot is running live in the background!"
+    return "Options Bot is running live in the background with data tracking!"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
@@ -32,9 +32,16 @@ MAX_SPREAD_PCT = 10.0
 MAX_DAILY_TRADES = 2
 trades_executed_today = 0
 
+def log_market_match(contract_symbol, bid, ask, spread_pct, executed):
+    """Records every matching contract into Render's cloud logs for offline analysis"""
+    print(f"📊 [DATA LOG] Time: {time.strftime('%Y-%m-%d %H:%M:%S')} | "
+          f"Contract: {contract_symbol} | Bid: ${bid:.2f} | Ask: ${ask:.2f} | "
+          f"Spread: {spread_pct:.2f}% | Trade Executed: {executed}")
+
 def execute_paper_trade(contract_symbol):
     global trades_executed_today
     if trades_executed_today >= MAX_DAILY_TRADES:
+        print("[SAFETY] Daily trade limit reached. Skipping execution, but logging data.")
         return
 
     try:
@@ -51,7 +58,7 @@ def execute_paper_trade(contract_symbol):
         print(f"❌ [ORDER ERROR] {e}")
 
 def run_background_bot():
-    print("\n🤖 Automated Paper Trading Bot loop started...")
+    print("\n🤖 Automated Paper Trading Bot & Data Tracker started...")
     while True:
         try:
             request_params = StockLatestQuoteRequest(symbol_or_symbols=WATCHLIST)
@@ -77,20 +84,28 @@ def run_background_bot():
                             
                             if opt_ask > 0:
                                 spread_pct = ((opt_ask - opt_bid) / opt_ask) * 100
+                                
+                                # Check if contract meets liquidity rules
                                 if spread_pct <= MAX_SPREAD_PCT and opt_ask > 0.10:
-                                    print(f"🎯 [MATCH] {opt_symbol} | Spread: {spread_pct:.1f}%")
-                                    execute_paper_trade(opt_symbol)
-                                    break
+                                    is_trading = trades_executed_today < MAX_DAILY_TRADES
+                                    
+                                    # ALWAYS log the data point regardless of trade limit
+                                    log_market_match(opt_symbol, opt_bid, opt_ask, spread_pct, executed=is_trading)
+                                    
+                                    # Execute trade only if under the daily limit
+                                    if is_trading:
+                                        execute_paper_trade(opt_symbol)
+                                        break
         except Exception as e:
             print(f"[LOOP ERROR] {e}")
 
         time.sleep(120)
 
 if __name__ == "__main__":
-    # Start the trading bot in a separate background thread
+    # Start the trading bot and data tracker in a background thread
     bot_thread = threading.Thread(target=run_background_bot)
     bot_thread.daemon = True
     bot_thread.start()
     
-    # Run the web server on the main thread to satisfy Render's port scan
+    # Run the web server on the main thread to satisfy Render's port requirement
     run_web_server()
